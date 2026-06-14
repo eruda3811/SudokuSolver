@@ -6,29 +6,24 @@
 <title>Sudoku Solver · any size · step-by-step</title>
 <style>
   :root {
-    --bg: #0f1320;
-    --panel: #171c2e;
-    --panel-2: #1f263d;
-    --line: #2b3350;
-    --line-strong: #5566a0;
-    --text: #e7ebf6;
-    --muted: #9aa6c9;
-    --accent: #5b8cff;
-    --accent-2: #38d39f;
-    --given: #e7ebf6;
-    --solved: #5b8cff;
-    --guess: #f0b429;
-    --error: #ff6b6b;
+    /* muted, low-saturation dark theme */
+    --bg: #15171c;
+    --panel: #1c1f26;
+    --panel-2: #242832;
+    --line: #2f343f;
+    --line-strong: #4a515f;
+    --text: #d3d7df;
+    --muted: #888f9d;
+    --accent: #6f93c0;       /* muted slate blue */
+    --accent-2: #6fae9a;     /* muted sage green */
+    --given: #e4e7ee;
+    --solved: #8fb0d8;
+    --guess: #cda86a;        /* muted amber */
+    --error: #d08a8a;        /* muted red */
     --cell: 44px;
     --radius: 12px;
     font-synthesis: none;
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #eef1f8; --panel: #ffffff; --panel-2: #f4f6fc;
-      --line: #d4dbf0; --line-strong: #8a97c8; --text: #1a2138;
-      --muted: #5a6488; --given: #1a2138; --solved: #2b62e0;
-    }
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body {
@@ -86,6 +81,13 @@
   .cell.guess { color: var(--guess); }
   .cell.conflict { background: color-mix(in srgb, var(--error) 28%, var(--panel)); color: var(--error); }
   .cell.active { box-shadow: inset 0 0 0 3px var(--accent-2); border-radius: 4px; }
+  /* play mode */
+  .cell.playable { color: var(--accent-2); }
+  .cell.locked { color: var(--given); background: color-mix(in srgb, var(--line) 35%, var(--panel)); }
+  .cell.wrong { background: color-mix(in srgb, var(--error) 30%, var(--panel)); color: var(--error); }
+  .cell.hinted { color: var(--guess); font-weight: 700; }
+  .board.win { animation: winpulse 1.6s ease; }
+  @keyframes winpulse { 0%,100%{box-shadow:0 0 0 0 transparent} 30%{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-2) 60%, transparent)} }
   /* thick box borders applied inline via style on each cell */
 
   .status { margin-top: 14px; min-height: 22px; font-size: 0.92rem; }
@@ -116,6 +118,8 @@
   .legend .l-given::before { color: var(--given); }
   .legend .l-solved::before { color: var(--solved); }
   .legend .l-guess::before { color: var(--guess); }
+  .legend .l-you::before { color: var(--accent-2); }
+  .legend .l-hint::before { color: var(--guess); }
   a { color: var(--accent); }
   .file-hidden { display: none; }
 </style>
@@ -124,7 +128,7 @@
 <div class="wrap">
   <header>
     <h1>Sudoku Solver</h1>
-    <p>Any-size grids · type a puzzle or import CSV · solve instantly or watch it solve step by step.</p>
+    <p>Any-size grids · random puzzles · type your own or import CSV · solve it yourself, or watch it solve step by step.</p>
   </header>
 
   <div class="toolbar">
@@ -149,7 +153,14 @@
       <button id="newGrid">New grid</button>
     </div>
     <div class="group">
-      <button id="sampleBtn">Sample puzzle</button>
+      <button id="randomBtn">🎲 Random puzzle</button>
+      <label class="fld">Difficulty
+        <select id="difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
       <button id="clearBtn">Clear</button>
       <button id="checkBtn">Check validity</button>
     </div>
@@ -168,12 +179,21 @@
           <span class="l-given">Given</span>
           <span class="l-solved">Solved (logic)</span>
           <span class="l-guess">Guess (backtracking)</span>
+          <span class="l-you">Your entry</span>
+          <span class="l-hint">Hint</span>
         </div>
-        <div class="status info" id="status">Ready. Enter a puzzle or load a sample.</div>
-        <div class="row-actions">
+        <div class="status info" id="status">Ready. Generate a random puzzle, type your own, or import a CSV.</div>
+        <div class="row-actions" id="solverActions">
           <button class="primary" id="solveBtn">Solve</button>
           <button class="good" id="stepBtn">Solve step-by-step</button>
+          <button id="playBtn">🧩 Solve it yourself</button>
           <button id="resetBtn" disabled>Reset to puzzle</button>
+        </div>
+        <div class="row-actions" id="playActions" style="display:none">
+          <button id="checkPlayBtn">Check my answer</button>
+          <button id="hintBtn">💡 Hint</button>
+          <button id="revealBtn">Show solution</button>
+          <button id="exitPlayBtn">Exit play mode</button>
         </div>
       </div>
     </div>
@@ -225,6 +245,11 @@ let events = [];                     // recorded solve steps
 let stepIndex = 0;                   // current step in playback (0 = puzzle state)
 let solved = false;
 let playTimer = null;
+
+// play-it-yourself mode
+let playMode = false;
+let locked = [];                     // 2D bool: which cells are puzzle givens (locked)
+let playGrid = [];                   // 2D: the player's working grid
 
 const $ = id => document.getElementById(id);
 const board = $("board");
@@ -295,6 +320,17 @@ function onCellInput(e) {
   const r = +cell.dataset.r, c = +cell.dataset.c;
   const v = charToVal(cell.value);
   cell.value = valToChar(v);
+
+  if (playMode) {
+    if (locked[r][c]) { cell.value = valToChar(playGrid[r][c]); return; }
+    playGrid[r][c] = v;
+    cell.classList.remove("wrong", "hinted");
+    cell.classList.toggle("playable", v !== 0);
+    highlightConflicts(playGrid);
+    checkWin();
+    return;
+  }
+
   given[r][c] = v;
   work[r][c] = v;
   events = []; stepIndex = 0; solved = false;
@@ -676,39 +712,158 @@ function exportCSV() {
   URL.revokeObjectURL(a.href);
 }
 
-// ---------- Samples ----------
-const SAMPLES = {
-  4: [
-    "1,0,0,4",
-    "0,0,0,0",
-    "0,0,0,0",
-    "3,0,0,2"
-  ].join("\n"),
-  6: [
-    "0,0,1,0,0,0",
-    "0,5,0,0,6,0",
-    "1,0,0,4,0,0",
-    "0,0,5,0,0,2",
-    "0,2,0,0,3,0",
-    "0,0,0,2,0,0"
-  ].join("\n"),
-  9: [
-    "5,3,0,0,7,0,0,0,0",
-    "6,0,0,1,9,5,0,0,0",
-    "0,9,8,0,0,0,0,6,0",
-    "8,0,0,0,6,0,0,0,3",
-    "4,0,0,8,0,3,0,0,1",
-    "7,0,0,0,2,0,0,0,6",
-    "0,6,0,0,0,0,2,8,0",
-    "0,0,0,4,1,9,0,0,5",
-    "0,0,0,0,8,0,0,7,9"
-  ].join("\n")
-};
+// ---------- Random puzzle generation ----------
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
-function loadSample() {
-  const s = SAMPLES[N] || SAMPLES[9];
-  if (!SAMPLES[N]) { loadCSVText(SAMPLES[9]); return; }
-  loadCSVText(s);
+// Build a complete, valid solution grid for the current size using a shuffled
+// base pattern (boxes are bh rows × bw cols, N = bh*bw).
+function generateSolution() {
+  const pat = (r, c) => (bw * (r % bh) + Math.floor(r / bh) + c) % N;
+  const bandCount = N / bh, stackCount = N / bw;
+  const rowOrder = [];
+  shuffle([...Array(bandCount).keys()]).forEach(b =>
+    shuffle([...Array(bh).keys()]).forEach(x => rowOrder.push(b * bh + x)));
+  const colOrder = [];
+  shuffle([...Array(stackCount).keys()]).forEach(s =>
+    shuffle([...Array(bw).keys()]).forEach(x => colOrder.push(s * bw + x)));
+  const nums = shuffle([...Array(N).keys()].map(x => x + 1));
+  const g = emptyGrid(N);
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++)
+    g[r][c] = nums[pat(rowOrder[r], colOrder[c])];
+  return g;
+}
+
+// Generate a random puzzle at the given difficulty and load it into `given`.
+function randomPuzzle(difficulty) {
+  exitPlay(true); // silently leave play mode if active
+  const sol = generateSolution();
+  const fracByDiff = { easy: 0.52, medium: 0.42, hard: 0.30 };
+  let frac = fracByDiff[difficulty] || 0.42;
+  const total = N * N;
+  let clues = Math.max(Math.round(total * frac), Math.ceil(total * 0.20));
+  const cells = shuffle(
+    Array.from({ length: total }, (_, i) => [Math.floor(i / N), i % N]));
+  given = emptyGrid(N);
+  for (let i = 0; i < clues; i++) { const [r, c] = cells[i]; given[r][c] = sol[r][c]; }
+  work = given.map(row => row.slice());
+  events = []; stepIndex = 0; solved = false;
+  buildBoard();
+  refreshStepUI();
+  $("resetBtn").disabled = true;
+  setStatus("info", `New random ${N}×${N} puzzle — ${difficulty} (${clues} clues). Solve it, or play it yourself.`);
+}
+
+// ---------- Solve-it-yourself (play) mode ----------
+function setActions(play) {
+  $("solverActions").style.display = play ? "none" : "";
+  $("playActions").style.display = play ? "" : "none";
+}
+
+function enterPlay() {
+  // when the board is showing a solution/steps, `given` still holds the puzzle —
+  // only re-read from the board while in editable mode.
+  if (!solved) readGivenFromBoard();
+  if (given.flat().every(v => v === 0)) {
+    setStatus("err", "Nothing to play yet — generate a random puzzle or enter one first.");
+    return;
+  }
+  if (highlightConflicts(given).size > 0) {
+    setStatus("err", "Fix the conflicting cells before playing.");
+    return;
+  }
+  // confirm the puzzle is solvable (so the player can actually win)
+  const res = solve(given);
+  if (res.status !== "solved") {
+    setStatus("err", "This puzzle has no solution, so it can't be played. Try a random puzzle.");
+    return;
+  }
+  stopPlay();
+  playMode = true; solved = false; events = []; refreshStepUI();
+  locked = given.map(row => row.map(v => v !== 0));
+  playGrid = given.map(row => row.slice());
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const cell = cellAt(r, c);
+    cell.className = "cell";
+    if (locked[r][c]) { cell.value = valToChar(given[r][c]); cell.readOnly = true; cell.classList.add("locked"); }
+    else { cell.value = ""; cell.readOnly = false; }
+    if ((c + 1) % bw === 0 && c !== N - 1) cell.style.borderRight = "2px solid var(--line-strong)";
+    if ((r + 1) % bh === 0 && r !== N - 1) cell.style.borderBottom = "2px solid var(--line-strong)";
+  }
+  setActions(true);
+  setStatus("info", "Play mode — fill the empty cells. Conflicts highlight as you type. Use Check or Hint anytime.");
+}
+
+// exit play mode. silent=true skips status/board rebuild (used before loading a new puzzle)
+function exitPlay(silent) {
+  if (!playMode) return;
+  playMode = false;
+  board.classList.remove("win");
+  setActions(false);
+  if (!silent) {
+    buildBoard(); // restore the puzzle givens for editing
+    setStatus("info", "Left play mode. The puzzle is back to edit mode.");
+  }
+}
+
+function checkPlay() {
+  const conflicts = highlightConflicts(playGrid);
+  const filled = playGrid.flat().filter(v => v !== 0).length;
+  const total = N * N;
+  if (conflicts.size > 0) {
+    setStatus("err", `${conflicts.size} cell(s) break Sudoku rules (highlighted in red). Fix those to continue.`);
+  } else if (filled < total) {
+    setStatus("ok", `No mistakes so far — ${filled}/${total} filled. Keep going!`);
+  } else {
+    checkWin();
+  }
+}
+
+function giveHint() {
+  // solve from the player's current entries; reveal one correct empty cell
+  const res = solve(playGrid);
+  if (res.status !== "solved") {
+    setStatus("err", "Your current entries make the puzzle unsolvable — use Check to find the mistake.");
+    return;
+  }
+  const empties = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++)
+    if (playGrid[r][c] === 0) empties.push([r, c]);
+  if (empties.length === 0) { checkWin(); return; }
+  const [r, c] = empties[Math.floor(Math.random() * empties.length)];
+  playGrid[r][c] = res.grid[r][c];
+  const cell = cellAt(r, c);
+  cell.value = valToChar(playGrid[r][c]);
+  cell.classList.remove("playable", "wrong");
+  cell.classList.add("hinted");
+  highlightConflicts(playGrid);
+  setStatus("info", `Hint: R${r + 1}C${c + 1} is ${valToChar(playGrid[r][c])}.`);
+  checkWin();
+}
+
+function revealSolution() {
+  const sol = solve(given); // reveal the solution of the original puzzle
+  if (sol.status !== "solved") { setStatus("err", "No solution to reveal."); return; }
+  playMode = false; board.classList.remove("win"); setActions(false);
+  work = sol.grid; solved = true;
+  renderGrid(sol.grid, (r, c) => locked[r][c] ? "given" : "solved");
+  $("resetBtn").disabled = false;
+  setStatus("info", "Solution revealed. Press “Reset to puzzle” to try again, or generate a new one.");
+}
+
+function checkWin() {
+  if (!playMode) return;
+  const complete = playGrid.every(row => row.every(v => v !== 0));
+  if (!complete) return;
+  if (highlightConflicts(playGrid).size === 0) {
+    board.classList.add("win");
+    setStatus("ok", "🎉 Solved it! Every row, column, and box is correct. Nicely done.");
+  }
 }
 
 // ---------- Status helpers ----------
@@ -735,8 +890,8 @@ $("sizePreset").addEventListener("change", () => {
   $("customBox").style.display = $("sizePreset").value === "custom" ? "" : "none";
 });
 $("newGrid").addEventListener("click", applySizeFromControls);
-$("sampleBtn").addEventListener("click", loadSample);
-$("clearBtn").addEventListener("click", () => { setSize(N, bw, bh); });
+$("randomBtn").addEventListener("click", () => randomPuzzle($("difficulty").value));
+$("clearBtn").addEventListener("click", () => { exitPlay(true); setSize(N, bw, bh); });
 $("checkBtn").addEventListener("click", () => {
   readGivenFromBoard();
   const bad = highlightConflicts(given);
@@ -745,6 +900,13 @@ $("checkBtn").addEventListener("click", () => {
 $("solveBtn").addEventListener("click", () => doSolve(false));
 $("stepBtn").addEventListener("click", () => doSolve(true));
 $("resetBtn").addEventListener("click", () => { stopPlay(); buildBoard(); solved = false; stepIndex = 0; events = []; refreshStepUI(); $("resetBtn").disabled = true; setStatus("info", "Reset to your puzzle."); });
+
+// play-it-yourself controls
+$("playBtn").addEventListener("click", enterPlay);
+$("checkPlayBtn").addEventListener("click", checkPlay);
+$("hintBtn").addEventListener("click", giveHint);
+$("revealBtn").addEventListener("click", revealSolution);
+$("exitPlayBtn").addEventListener("click", () => exitPlay(false));
 
 $("firstStep").addEventListener("click", () => { stopPlay(); gotoStep(0); });
 $("prevStep").addEventListener("click", () => { stopPlay(); gotoStep(stepIndex - 1); });
@@ -777,6 +939,7 @@ board.addEventListener("drop", e => {
 
 // ---------- Init ----------
 setSize(9, 3, 3);
+randomPuzzle("medium");
 refreshStepUI();
 </script>
 </body>

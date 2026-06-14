@@ -7,11 +7,14 @@ A self-contained Sudoku solver that runs **locally by double-click** and **onlin
 ## Features
 
 - **Any grid size** — 4×4, 6×6, 9×9, 12×12, 16×16, 25×25, plus custom box dimensions. Sizes above 9 use letters (10 = A, 11 = B, …).
-- **Two ways to enter a puzzle** — type directly into the grid (arrow keys to navigate), or **import a CSV** (button or drag-and-drop onto the grid).
+- **Random puzzle generator** — one click builds a fresh, solvable puzzle at any size, with **Easy / Medium / Hard** difficulty (controls how many clues are given). The app opens on a random puzzle.
+- **Three ways to enter a puzzle** — generate a random one, type directly into the grid (arrow keys to navigate), or **import a CSV** (button or drag-and-drop onto the grid).
+- **Solve it yourself (play mode)** — lock the givens and fill the rest in yourself. Conflicts highlight live as you type; **Check my answer** flags rule-breaking cells, **Hint** reveals one correct cell, **Show solution** finishes it, and a win banner appears when you complete it correctly.
 - **Instant solve** — backtracking search with constraint propagation and a minimum-remaining-values heuristic.
 - **Step-by-step solution** — every move is recorded and explained (naked single, hidden single, guess, backtrack) with play / pause / next / prev / scrub controls and adjustable speed.
-- **Validation** — conflicting givens are highlighted before solving.
+- **Validation** — conflicting cells are highlighted before solving and while playing.
 - **Export CSV** — save the puzzle or the completed solution.
+- **Calm dark theme** — a muted, low-saturation dark UI that's easy on the eyes.
 - **No dependencies, no build, no network** — one HTML file. Works from `file://` or any static host.
 
 ## Run it
