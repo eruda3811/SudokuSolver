@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sudoku Solver · any size · step-by-step</title>
+<style>
+  :root {
+    --bg: #0f1320;
+    --panel: #171c2e;
+    --panel-2: #1f263d;
+    --line: #2b3350;
+    --line-strong: #5566a0;
+    --text: #e7ebf6;
+    --muted: #9aa6c9;
+    --accent: #5b8cff;
+    --accent-2: #38d39f;
+    --given: #e7ebf6;
+    --solved: #5b8cff;
+    --guess: #f0b429;
+    --error: #ff6b6b;
+    --cell: 44px;
+    --radius: 12px;
+    font-synthesis: none;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #eef1f8; --panel: #ffffff; --panel-2: #f4f6fc;
+      --line: #d4dbf0; --line-strong: #8a97c8; --text: #1a2138;
+      --muted: #5a6488; --given: #1a2138; --solved: #2b62e0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 64px; }
+  header h1 { font-size: 1.55rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  header p { margin: 0 0 20px; color: var(--muted); font-size: 0.95rem; }
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 20px; align-items: start; }
+  @media (max-width: 880px) { .layout { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .panel + .panel { margin-top: 16px; }
+  .panel h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 12px; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .toolbar .group { display: flex; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+  label.fld { display: inline-flex; flex-direction: column; font-size: 0.7rem; color: var(--muted); gap: 2px; }
+  select, input[type=number] {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 8px; font-size: 0.9rem; font-family: inherit;
+  }
+  input[type=number] { width: 56px; }
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 8px 12px; font-size: 0.9rem; cursor: pointer; font-family: inherit;
+    transition: border-color .12s, background .12s, transform .05s;
+  }
+  button:hover { border-color: var(--line-strong); }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.07); }
+  button.good { background: var(--accent-2); border-color: var(--accent-2); color: #04231a; font-weight: 600; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .board-area { display: flex; justify-content: center; }
+  .board {
+    display: grid; gap: 0; background: var(--line-strong);
+    border: 2px solid var(--line-strong); border-radius: 8px; overflow: hidden;
+  }
+  .cell {
+    width: var(--cell); height: var(--cell);
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--given);
+    text-align: center; font-size: calc(var(--cell) * 0.46); font-weight: 600;
+    outline: none; padding: 0; caret-color: var(--accent);
+    text-transform: uppercase;
+  }
+  .cell:focus { background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+  .cell.given { color: var(--given); }
+  .cell.solved { color: var(--solved); font-weight: 700; }
+  .cell.guess { color: var(--guess); }
+  .cell.conflict { background: color-mix(in srgb, var(--error) 28%, var(--panel)); color: var(--error); }
+  .cell.active { box-shadow: inset 0 0 0 3px var(--accent-2); border-radius: 4px; }
+  /* thick box borders applied inline via style on each cell */
+
+  .status { margin-top: 14px; min-height: 22px; font-size: 0.92rem; }
+  .status.ok { color: var(--accent-2); }
+  .status.err { color: var(--error); }
+  .status.info { color: var(--muted); }
+
+  .steps-controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .steps-controls button { padding: 8px 10px; }
+  .stepbar { margin-top: 12px; }
+  .stepbar input[type=range] { width: 100%; }
+  .step-counter { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.85rem; }
+  .reason {
+    margin-top: 12px; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; font-size: 0.9rem; min-height: 64px;
+  }
+  .reason .tech { display: inline-block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: .06em;
+    padding: 2px 8px; border-radius: 999px; margin-bottom: 6px; font-weight: 700; }
+  .tech.naked { background: color-mix(in srgb, var(--accent-2) 25%, transparent); color: var(--accent-2); }
+  .tech.hidden { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--accent); }
+  .tech.guess { background: color-mix(in srgb, var(--guess) 22%, transparent); color: var(--guess); }
+  .tech.backtrack { background: color-mix(in srgb, var(--error) 22%, transparent); color: var(--error); }
+  .reason .detail { color: var(--text); }
+  .hint { color: var(--muted); font-size: 0.82rem; margin-top: 8px; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
+  .legend span::before { content: "●"; margin-right: 5px; }
+  .legend .l-given::before { color: var(--given); }
+  .legend .l-solved::before { color: var(--solved); }
+  .legend .l-guess::before { color: var(--guess); }
+  a { color: var(--accent); }
+  .file-hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Sudoku Solver</h1>
+    <p>Any-size grids · type a puzzle or import CSV · solve instantly or watch it solve step by step.</p>
+  </header>
+
+  <div class="toolbar">
+    <div class="group">
+      <label class="fld">Size
+        <select id="sizePreset">
+          <option value="4">4 × 4 (2×2 boxes)</option>
+          <option value="6">6 × 6 (2×3 boxes)</option>
+          <option value="9" selected>9 × 9 (3×3 boxes)</option>
+          <option value="12">12 × 12 (3×4 boxes)</option>
+          <option value="16">16 × 16 (4×4 boxes)</option>
+          <option value="25">25 × 25 (5×5 boxes)</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      <label class="fld" id="customBox" style="display:none">Box w×h
+        <span style="display:flex;gap:4px">
+          <input type="number" id="boxW" min="1" max="6" value="3" />
+          <input type="number" id="boxH" min="1" max="6" value="3" />
+        </span>
+      </label>
+      <button id="newGrid">New grid</button>
+    </div>
+    <div class="group">
+      <button id="sampleBtn">Sample puzzle</button>
+      <button id="clearBtn">Clear</button>
+      <button id="checkBtn">Check validity</button>
+    </div>
+    <div class="group">
+      <button id="importBtn">Import CSV</button>
+      <button id="exportBtn">Export CSV</button>
+      <input type="file" id="fileInput" class="file-hidden" accept=".csv,text/csv" />
+    </div>
+  </div>
+
+  <div class="layout">
+    <div>
+      <div class="panel">
+        <div class="board-area"><div class="board" id="board"></div></div>
+        <div class="legend">
+          <span class="l-given">Given</span>
+          <span class="l-solved">Solved (logic)</span>
+          <span class="l-guess">Guess (backtracking)</span>
+        </div>
+        <div class="status info" id="status">Ready. Enter a puzzle or load a sample.</div>
+        <div class="row-actions">
+          <button class="primary" id="solveBtn">Solve</button>
+          <button class="good" id="stepBtn">Solve step-by-step</button>
+          <button id="resetBtn" disabled>Reset to puzzle</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" id="stepsPanel">
+        <h2>Step-by-step</h2>
+        <div class="steps-controls">
+          <button id="firstStep" title="First">⏮</button>
+          <button id="prevStep" title="Previous">◀</button>
+          <button id="playStep" title="Play">▶</button>
+          <button id="nextStep" title="Next">▶▶</button>
+          <button id="lastStep" title="Last">⏭</button>
+          <span class="step-counter" id="stepCounter">0 / 0</span>
+        </div>
+        <div class="stepbar">
+          <input type="range" id="stepSlider" min="0" max="0" value="0" />
+        </div>
+        <label class="fld" style="margin-top:8px">Speed
+          <input type="range" id="speed" min="1" max="60" value="20" />
+        </label>
+        <div class="reason" id="reason">
+          <span class="detail">Run <b>Solve step-by-step</b> to generate an explained solution, then use the controls to replay it.</span>
+        </div>
+        <div class="hint">Logic steps (naked / hidden singles) are explained individually. Hard or large puzzles fall back to backtracking, where guesses and backtracks are shown too.</div>
+      </div>
+
+      <div class="panel">
+        <h2>CSV format</h2>
+        <div class="hint">
+          One row per line, values separated by commas. Use <code>0</code>, blank, or <code>.</code> for empty cells.
+          For sizes above 9, use letters: 10=A, 11=B, … (so 16×16 uses 1–9 then A–G).
+          The grid auto-resizes to match the CSV.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const SYMS = "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"; // up to 35 symbols
+
+// ---------- State ----------
+let N = 9, bw = 3, bh = 3;          // grid side, box width, box height
+let given = [];                      // 2D array of the user's puzzle (0 = empty)
+let work = [];                       // working/displayed grid
+let events = [];                     // recorded solve steps
+let stepIndex = 0;                   // current step in playback (0 = puzzle state)
+let solved = false;
+let playTimer = null;
+
+const $ = id => document.getElementById(id);
+const board = $("board");
+
+// ---------- Symbol helpers ----------
+const valToChar = v => v === 0 ? "" : SYMS[v - 1];
+const charToVal = ch => {
+  if (ch == null) return 0;
+  ch = String(ch).trim().toUpperCase();
+  if (ch === "" || ch === "0" || ch === ".") return 0;
+  const i = SYMS.indexOf(ch);
+  return (i >= 0 && i < N) ? i + 1 : 0;
+};
+
+// ---------- Box geometry ----------
+function boxOf(r, c) { return { br: Math.floor(r / bh), bc: Math.floor(c / bw) }; }
+
+// ---------- Grid build / render ----------
+function emptyGrid(n) { return Array.from({ length: n }, () => Array(n).fill(0)); }
+
+function setSize(n, w, h) {
+  N = n; bw = w; bh = h;
+  given = emptyGrid(N);
+  work = emptyGrid(N);
+  events = []; stepIndex = 0; solved = false;
+  buildBoard();
+  setStatus("info", `New ${N}×${N} grid (${bw}×${bh} boxes). Enter values or import a CSV.`);
+  refreshStepUI();
+}
+
+function cellSizePx() {
+  if (N <= 6) return 48;
+  if (N <= 9) return 44;
+  if (N <= 12) return 36;
+  if (N <= 16) return 28;
+  return 20;
+}
+
+function buildBoard() {
+  document.documentElement.style.setProperty("--cell", cellSizePx() + "px");
+  board.style.gridTemplateColumns = `repeat(${N}, var(--cell))`;
+  board.innerHTML = "";
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      const cell = document.createElement("input");
+      cell.className = "cell";
+      cell.maxLength = 1;
+      cell.dataset.r = r; cell.dataset.c = c;
+      cell.autocomplete = "off"; cell.spellcheck = false;
+      // thick box separators
+      const rightThick = (c + 1) % bw === 0 && c !== N - 1;
+      const bottomThick = (r + 1) % bh === 0 && r !== N - 1;
+      if (rightThick) cell.style.borderRight = "2px solid var(--line-strong)";
+      if (bottomThick) cell.style.borderBottom = "2px solid var(--line-strong)";
+      cell.addEventListener("input", onCellInput);
+      cell.addEventListener("keydown", onCellKey);
+      cell.value = valToChar(given[r][c]);
+      board.appendChild(cell);
+    }
+  }
+  paintFromGiven();
+}
+
+function cellAt(r, c) { return board.children[r * N + c]; }
+
+function onCellInput(e) {
+  const cell = e.target;
+  const r = +cell.dataset.r, c = +cell.dataset.c;
+  const v = charToVal(cell.value);
+  cell.value = valToChar(v);
+  given[r][c] = v;
+  work[r][c] = v;
+  events = []; stepIndex = 0; solved = false;
+  $("resetBtn").disabled = true;
+  paintFromGiven();
+  refreshStepUI();
+  clearStatus();
+}
+
+function onCellKey(e) {
+  const r = +e.target.dataset.r, c = +e.target.dataset.c;
+  let nr = r, nc = c;
+  if (e.key === "ArrowRight") nc++;
+  else if (e.key === "ArrowLeft") nc--;
+  else if (e.key === "ArrowUp") nr--;
+  else if (e.key === "ArrowDown") nr++;
+  else if (e.key === "Backspace" && e.target.value === "") nc--;
+  else return;
+  e.preventDefault();
+  nr = (nr + N) % N; nc = (nc + N) % N;
+  cellAt(nr, nc).focus();
+}
+
+// paint cells using `given` (no solve applied)
+function paintFromGiven() {
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const cell = cellAt(r, c);
+    cell.classList.remove("solved", "guess", "active");
+    cell.classList.toggle("given", given[r][c] !== 0);
+    cell.value = valToChar(given[r][c]);
+    cell.readOnly = false;
+  }
+  highlightConflicts(given);
+}
+
+// ---------- Conflict detection ----------
+function findConflicts(g) {
+  const bad = new Set();
+  const scan = cells => {
+    const seen = new Map();
+    for (const [r, c] of cells) {
+      const v = g[r][c];
+      if (v === 0) continue;
+      if (seen.has(v)) { bad.add(r + "," + c); bad.add(seen.get(v)); }
+      else seen.set(v, r + "," + c);
+    }
+  };
+  for (let r = 0; r < N; r++) scan(Array.from({ length: N }, (_, c) => [r, c]));
+  for (let c = 0; c < N; c++) scan(Array.from({ length: N }, (_, r) => [r, c]));
+  for (let br = 0; br < N / bw; br++) for (let bc = 0; bc < N / bh; bc++) {
+    // iterate boxes properly: boxes are bh rows x bw cols
+  }
+  // box scan (correct geometry)
+  for (let r0 = 0; r0 < N; r0 += bh) for (let c0 = 0; c0 < N; c0 += bw) {
+    const cells = [];
+    for (let dr = 0; dr < bh; dr++) for (let dc = 0; dc < bw; dc++) cells.push([r0 + dr, c0 + dc]);
+    scan(cells);
+  }
+  return bad;
+}
+
+function highlightConflicts(g) {
+  const bad = findConflicts(g);
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++)
+    cellAt(r, c).classList.toggle("conflict", bad.has(r + "," + c));
+  return bad;
+}
+
+// ---------- Solver ----------
+function candidates(g, r, c) {
+  if (g[r][c] !== 0) return new Set();
+  const used = new Set();
+  for (let i = 0; i < N; i++) { used.add(g[r][i]); used.add(g[i][c]); }
+  const r0 = Math.floor(r / bh) * bh, c0 = Math.floor(c / bw) * bw;
+  for (let dr = 0; dr < bh; dr++) for (let dc = 0; dc < bw; dc++) used.add(g[r0 + dr][c0 + dc]);
+  const cand = new Set();
+  for (let v = 1; v <= N; v++) if (!used.has(v)) cand.add(v);
+  return cand;
+}
+
+function units() {
+  const u = [];
+  for (let r = 0; r < N; r++) u.push({ type: "row", n: r + 1, cells: Array.from({ length: N }, (_, c) => [r, c]) });
+  for (let c = 0; c < N; c++) u.push({ type: "column", n: c + 1, cells: Array.from({ length: N }, (_, r) => [r, c]) });
+  let b = 1;
+  for (let r0 = 0; r0 < N; r0 += bh) for (let c0 = 0; c0 < N; c0 += bw) {
+    const cells = [];
+    for (let dr = 0; dr < bh; dr++) for (let dc = 0; dc < bw; dc++) cells.push([r0 + dr, c0 + dc]);
+    u.push({ type: "box", n: b++, cells });
+  }
+  return u;
+}
+
+// returns {status, events, grid}
+function solve(puzzle) {
+  const g = puzzle.map(row => row.slice());
+  const ev = [];
+
+  // initial validity
+  if (findConflicts(g).size > 0) return { status: "invalid", events: ev, grid: g };
+
+  const U = units();
+
+  // Phase A: logical propagation (naked + hidden singles)
+  let progress = true;
+  while (progress) {
+    progress = false;
+    // naked singles
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      if (g[r][c] !== 0) continue;
+      const cand = candidates(g, r, c);
+      if (cand.size === 0) return { status: "unsolvable", events: ev, grid: g };
+      if (cand.size === 1) {
+        const v = [...cand][0];
+        g[r][c] = v;
+        ev.push({ r, c, v, type: "place", tech: "naked",
+          reason: `Cell R${r + 1}C${c + 1} can only be ${valToChar(v)} — every other value already appears in its row, column, or box.` });
+        progress = true;
+      }
+    }
+    // hidden singles
+    for (const unit of U) {
+      const empties = unit.cells.filter(([r, c]) => g[r][c] === 0);
+      const present = new Set(unit.cells.map(([r, c]) => g[r][c]));
+      for (let v = 1; v <= N; v++) {
+        if (present.has(v)) continue;
+        const spots = empties.filter(([r, c]) => candidates(g, r, c).has(v));
+        if (spots.length === 0 && empties.length > 0) {
+          // value can't be placed anywhere in this unit -> dead end
+          return { status: "unsolvable", events: ev, grid: g };
+        }
+        if (spots.length === 1) {
+          const [r, c] = spots[0];
+          g[r][c] = v;
+          ev.push({ r, c, v, type: "place", tech: "hidden",
+            reason: `In ${unit.type} ${unit.n}, ${valToChar(v)} fits only in R${r + 1}C${c + 1} — it is blocked from every other empty cell there.` });
+          progress = true;
+        }
+      }
+    }
+  }
+
+  if (isComplete(g)) return { status: "solved", events: ev, grid: g };
+
+  // Phase B: backtracking with MRV, recording guesses/backtracks
+  const guard = { count: 0, limit: 400_000 };
+  const ok = backtrack(g, ev, guard);
+  if (guard.count >= guard.limit) return { status: "timeout", events: ev, grid: g };
+  return { status: ok ? "solved" : "unsolvable", events: ev, grid: g };
+}
+
+function undoPlaced(g, ev, placed) {
+  for (let i = placed.length - 1; i >= 0; i--) {
+    const [r, c] = placed[i];
+    g[r][c] = 0;
+    ev.push({ r, c, v: 0, type: "remove", tech: "backtrack",
+      reason: `Undo forced value at R${r + 1}C${c + 1} while backtracking.` });
+  }
+}
+
+function backtrack(g, ev, guard) {
+  if (++guard.count > guard.limit) return false;
+
+  // Constraint propagation: apply naked singles forced by the last guess,
+  // recording them so they can be undone if this branch fails.
+  const placed = [];
+  let prog = true;
+  while (prog) {
+    prog = false;
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      if (g[r][c] !== 0) continue;
+      const cand = candidates(g, r, c);
+      if (cand.size === 0) { undoPlaced(g, ev, placed); return false; }
+      if (cand.size === 1) {
+        const v = [...cand][0];
+        g[r][c] = v; placed.push([r, c]);
+        ev.push({ r, c, v, type: "place", tech: "naked",
+          reason: `R${r + 1}C${c + 1} is forced to ${valToChar(v)} — it's the only remaining candidate after the latest move.` });
+        prog = true;
+      }
+    }
+  }
+
+  // find empty cell with fewest candidates (MRV)
+  let best = null, bestCand = null;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (g[r][c] !== 0) continue;
+    const cand = candidates(g, r, c);
+    if (cand.size === 0) { undoPlaced(g, ev, placed); return false; }
+    if (!best || cand.size < bestCand.size) { best = [r, c]; bestCand = cand; }
+  }
+  if (!best) return true; // fully filled (these propagated placements stay)
+
+  const [r, c] = best;
+  for (const v of bestCand) {
+    g[r][c] = v;
+    ev.push({ r, c, v, type: "place", tech: "guess",
+      reason: `No forced move remained, so the solver tries ${valToChar(v)} in R${r + 1}C${c + 1} (the cell with the fewest options).` });
+    if (backtrack(g, ev, guard)) return true;
+    g[r][c] = 0;
+    ev.push({ r, c, v: 0, type: "remove", tech: "backtrack",
+      reason: `${valToChar(v)} in R${r + 1}C${c + 1} led to a contradiction — undo it and try the next option.` });
+    if (guard.count > guard.limit) { undoPlaced(g, ev, placed); return false; }
+  }
+  undoPlaced(g, ev, placed);
+  return false;
+}
+
+function isComplete(g) {
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (g[r][c] === 0) return false;
+  return true;
+}
+
+// ---------- Actions ----------
+function readGivenFromBoard() {
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++)
+    given[r][c] = charToVal(cellAt(r, c).value);
+}
+
+function doSolve(stepMode) {
+  readGivenFromBoard();
+  if (highlightConflicts(given).size > 0) {
+    setStatus("err", "The puzzle has conflicting values (highlighted). Fix them before solving.");
+    return;
+  }
+  setStatus("info", "Solving…");
+  // allow the status to paint before heavy work
+  setTimeout(() => {
+    const t0 = performance.now();
+    const res = solve(given);
+    const ms = Math.round(performance.now() - t0);
+    events = res.events;
+
+    if (res.status === "invalid") { setStatus("err", "Invalid puzzle: duplicate values in a row, column, or box."); return; }
+    if (res.status === "unsolvable") { setStatus("err", "This puzzle has no solution."); applyStepRange(events.length); return; }
+    if (res.status === "timeout") { setStatus("err", "Gave up after too many attempts — the puzzle may be malformed or extremely hard."); return; }
+
+    solved = true;
+    work = res.grid;
+    $("resetBtn").disabled = false;
+
+    if (stepMode) {
+      stepIndex = 0;
+      applyStepRange(0);
+      refreshStepUI();
+      const logic = events.filter(e => e.tech === "naked" || e.tech === "hidden").length;
+      const guesses = events.filter(e => e.tech === "guess").length;
+      setStatus("ok", `Solved in ${ms} ms — ${events.length} steps (${logic} by logic, ${guesses} guesses). Use the step controls to replay.`);
+    } else {
+      renderGrid(res.grid, fullClasses());
+      stepIndex = events.length;
+      refreshStepUI();
+      setStatus("ok", `Solved in ${ms} ms.`);
+    }
+  }, 20);
+}
+
+// returns class-decision function for fully solved grid
+function fullClasses() {
+  // recompute which cells were given vs derived
+  return (r, c) => given[r][c] !== 0 ? "given" : "solved";
+}
+
+// Apply events[0..count) onto a fresh copy of `given` and render
+function applyStepRange(count) {
+  const g = given.map(row => row.slice());
+  const cls = Array.from({ length: N }, () => Array(N).fill(""));
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (given[r][c] !== 0) cls[r][c] = "given";
+  let last = null;
+  for (let i = 0; i < count && i < events.length; i++) {
+    const e = events[i];
+    if (e.type === "place") { g[e.r][e.c] = e.v; cls[e.r][e.c] = (e.tech === "guess") ? "guess" : "solved"; }
+    else { g[e.r][e.c] = 0; cls[e.r][e.c] = ""; }
+    last = e;
+  }
+  renderGrid(g, (r, c) => cls[r][c]);
+  if (last && count > 0) {
+    const cell = cellAt(last.r, last.c);
+    cell.classList.add("active");
+    updateReason(last, count);
+  } else {
+    updateReason(null, 0);
+  }
+}
+
+function renderGrid(g, classFn) {
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const cell = cellAt(r, c);
+    cell.value = valToChar(g[r][c]);
+    cell.classList.remove("given", "solved", "guess", "active", "conflict");
+    const k = classFn(r, c);
+    if (k) cell.classList.add(k);
+    cell.readOnly = true;
+  }
+}
+
+function updateReason(ev, count) {
+  const box = $("reason");
+  if (!ev) {
+    box.innerHTML = `<span class="detail">Step 0 — starting position. Press <b>▶</b> or <b>Next</b> to begin.</span>`;
+    return;
+  }
+  const labels = { naked: "Naked single", hidden: "Hidden single", guess: "Guess", backtrack: "Backtrack" };
+  box.innerHTML = `<span class="tech ${ev.tech}">${labels[ev.tech]}</span>` +
+                  `<div class="detail"><b>Step ${count}:</b> ${ev.reason}</div>`;
+}
+
+// ---------- Step UI ----------
+function refreshStepUI() {
+  const max = events.length;
+  $("stepSlider").max = max;
+  $("stepSlider").value = stepIndex;
+  $("stepCounter").textContent = `${stepIndex} / ${max}`;
+  const none = max === 0;
+  ["firstStep", "prevStep", "playStep", "nextStep", "lastStep", "stepSlider"].forEach(id => $(id).disabled = none);
+}
+function gotoStep(i) {
+  stepIndex = Math.max(0, Math.min(events.length, i));
+  applyStepRange(stepIndex);
+  refreshStepUI();
+}
+function play() {
+  if (playTimer) { stopPlay(); return; }
+  $("playStep").textContent = "⏸";
+  const tick = () => {
+    if (stepIndex >= events.length) { stopPlay(); return; }
+    gotoStep(stepIndex + 1);
+    const fps = +$("speed").value;
+    playTimer = setTimeout(tick, 1000 / fps);
+  };
+  tick();
+}
+function stopPlay() { clearTimeout(playTimer); playTimer = null; $("playStep").textContent = "▶"; }
+
+// ---------- CSV ----------
+function parseCSV(text) {
+  const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim() !== "");
+  const rows = lines.map(l => l.split(",").map(s => s.trim()));
+  const n = rows.length;
+  if (n === 0) throw new Error("CSV is empty.");
+  if (rows.some(r => r.length !== n)) throw new Error(`CSV must be square; got ${n} rows but inconsistent column counts.`);
+  const dims = boxDimsFor(n);
+  if (!dims) throw new Error(`Unsupported size ${n}×${n}. Use a size whose side has integer box dimensions (e.g. 4,6,9,12,16,25).`);
+  return { n, rows, dims };
+}
+
+function boxDimsFor(n) {
+  const presets = { 4: [2, 2], 6: [3, 2], 9: [3, 3], 12: [4, 3], 16: [4, 4], 25: [5, 5] };
+  if (presets[n]) return presets[n];
+  const root = Math.sqrt(n);
+  if (Number.isInteger(root)) return [root, root];
+  // find factor pair closest to square
+  for (let h = Math.floor(root); h >= 1; h--) if (n % h === 0) return [n / h, h];
+  return null;
+}
+
+function loadCSVText(text) {
+  const { n, rows, dims } = parseCSV(text);
+  setSize(n, dims[0], dims[1]);
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    given[r][c] = charToVal(rows[r][c]);
+  }
+  buildBoard();
+  if (highlightConflicts(given).size > 0)
+    setStatus("err", `Loaded ${n}×${n} CSV — but it contains conflicts (highlighted).`);
+  else
+    setStatus("ok", `Loaded ${n}×${n} puzzle from CSV.`);
+}
+
+function exportCSV() {
+  readGivenFromBoard();
+  const g = solved ? work : given;
+  const text = g.map(row => row.map(v => v === 0 ? "0" : valToChar(v)).join(",")).join("\n");
+  const blob = new Blob([text], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (solved ? "sudoku-solution" : "sudoku-puzzle") + `-${N}x${N}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- Samples ----------
+const SAMPLES = {
+  4: [
+    "1,0,0,4",
+    "0,0,0,0",
+    "0,0,0,0",
+    "3,0,0,2"
+  ].join("\n"),
+  6: [
+    "0,0,1,0,0,0",
+    "0,5,0,0,6,0",
+    "1,0,0,4,0,0",
+    "0,0,5,0,0,2",
+    "0,2,0,0,3,0",
+    "0,0,0,2,0,0"
+  ].join("\n"),
+  9: [
+    "5,3,0,0,7,0,0,0,0",
+    "6,0,0,1,9,5,0,0,0",
+    "0,9,8,0,0,0,0,6,0",
+    "8,0,0,0,6,0,0,0,3",
+    "4,0,0,8,0,3,0,0,1",
+    "7,0,0,0,2,0,0,0,6",
+    "0,6,0,0,0,0,2,8,0",
+    "0,0,0,4,1,9,0,0,5",
+    "0,0,0,0,8,0,0,7,9"
+  ].join("\n")
+};
+
+function loadSample() {
+  const s = SAMPLES[N] || SAMPLES[9];
+  if (!SAMPLES[N]) { loadCSVText(SAMPLES[9]); return; }
+  loadCSVText(s);
+}
+
+// ---------- Status helpers ----------
+function setStatus(kind, msg) { const s = $("status"); s.className = "status " + kind; s.textContent = msg; }
+function clearStatus() { setStatus("info", ""); }
+
+// ---------- Wiring ----------
+function currentCustomDims() { return [clamp(+$("boxW").value, 1, 6), clamp(+$("boxH").value, 1, 6)]; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v || a)); }
+
+function applySizeFromControls() {
+  const p = $("sizePreset").value;
+  if (p === "custom") {
+    const [w, h] = currentCustomDims();
+    setSize(w * h, w, h);
+  } else {
+    const n = +p;
+    const [w, h] = boxDimsFor(n);
+    setSize(n, w, h);
+  }
+}
+
+$("sizePreset").addEventListener("change", () => {
+  $("customBox").style.display = $("sizePreset").value === "custom" ? "" : "none";
+});
+$("newGrid").addEventListener("click", applySizeFromControls);
+$("sampleBtn").addEventListener("click", loadSample);
+$("clearBtn").addEventListener("click", () => { setSize(N, bw, bh); });
+$("checkBtn").addEventListener("click", () => {
+  readGivenFromBoard();
+  const bad = highlightConflicts(given);
+  setStatus(bad.size ? "err" : "ok", bad.size ? `${bad.size} cells conflict (highlighted).` : "No conflicts — puzzle is valid so far.");
+});
+$("solveBtn").addEventListener("click", () => doSolve(false));
+$("stepBtn").addEventListener("click", () => doSolve(true));
+$("resetBtn").addEventListener("click", () => { stopPlay(); buildBoard(); solved = false; stepIndex = 0; events = []; refreshStepUI(); $("resetBtn").disabled = true; setStatus("info", "Reset to your puzzle."); });
+
+$("firstStep").addEventListener("click", () => { stopPlay(); gotoStep(0); });
+$("prevStep").addEventListener("click", () => { stopPlay(); gotoStep(stepIndex - 1); });
+$("nextStep").addEventListener("click", () => { stopPlay(); gotoStep(stepIndex + 1); });
+$("lastStep").addEventListener("click", () => { stopPlay(); gotoStep(events.length); });
+$("playStep").addEventListener("click", play);
+$("stepSlider").addEventListener("input", e => { stopPlay(); gotoStep(+e.target.value); });
+
+$("importBtn").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { try { loadCSVText(reader.result); } catch (err) { setStatus("err", err.message); } };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+$("exportBtn").addEventListener("click", exportCSV);
+
+// drag & drop CSV onto board
+board.addEventListener("dragover", e => e.preventDefault());
+board.addEventListener("drop", e => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { try { loadCSVText(reader.result); } catch (err) { setStatus("err", err.message); } };
+  reader.readAsText(file);
+});
+
+// ---------- Init ----------
+setSize(9, 3, 3);
+refreshStepUI();
+</script>
+</body>
+</html>
