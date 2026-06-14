@@ -425,7 +425,136 @@ function units() {
 }
 
 // returns {status, events, grid}
+// Dispatch to the fast bitmask solver when values fit in a 32-bit mask
+// (covers every preset and every custom size up to 31). Larger custom grids
+// fall back to the set-based solver below.
 function solve(puzzle) {
+  return N <= 31 ? solveFast(puzzle) : solveLegacy(puzzle);
+}
+
+// Fast solver: tracks per-row / per-column / per-box occupancy as integer
+// bitmasks with O(1) place/undo, so candidates are read in constant time
+// instead of rebuilding a Set and rescanning the row, column and box at every
+// search node. Emits the same event stream as the legacy solver.
+function solveFast(puzzle) {
+  const n = N, BPR = n / bw;                 // boxes per row
+  const g = puzzle.map(row => row.slice());
+  const ev = [];
+  if (findConflicts(g).size > 0) return { status: "invalid", events: ev, grid: g };
+
+  const boxIdx = (r, c) => ((r / bh) | 0) * BPR + ((c / bw) | 0);
+  let FULL = 0;
+  for (let v = 1; v <= n; v++) FULL |= (1 << v);   // bits 1..n (n<=31 → no sign bit)
+
+  const rowM = new Int32Array(n), colM = new Int32Array(n), boxM = new Int32Array(n);
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const v = g[r][c];
+    if (v) { const bit = 1 << v; rowM[r] |= bit; colM[c] |= bit; boxM[boxIdx(r, c)] |= bit; }
+  }
+
+  const candMask = (r, c) => FULL & ~(rowM[r] | colM[c] | boxM[boxIdx(r, c)]);
+  const place = (r, c, v) => { g[r][c] = v; const bit = 1 << v; rowM[r] |= bit; colM[c] |= bit; boxM[boxIdx(r, c)] |= bit; };
+  const unplace = (r, c, v) => { g[r][c] = 0; const bit = ~(1 << v); rowM[r] &= bit; colM[c] &= bit; boxM[boxIdx(r, c)] &= bit; };
+  const lowVal = m => 31 - Math.clz32(m & -m);     // value of lowest set bit
+  const popcount = m => { m = m - ((m >>> 1) & 0x55555555); m = (m & 0x33333333) + ((m >>> 2) & 0x33333333); m = (m + (m >>> 4)) & 0x0f0f0f0f; return (m * 0x01010101) >>> 24; };
+
+  const U = units();
+
+  // Phase A: logical propagation (naked + hidden singles)
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      if (g[r][c]) continue;
+      const m = candMask(r, c);
+      if (m === 0) return { status: "unsolvable", events: ev, grid: g };
+      if ((m & (m - 1)) === 0) {
+        const v = lowVal(m); place(r, c, v);
+        ev.push({ r, c, v, type: "place", tech: "naked",
+          reason: `Cell R${r + 1}C${c + 1} can only be ${valToChar(v)} — every other value already appears in its row, column, or box.` });
+        progress = true;
+      }
+    }
+    for (const unit of U) {
+      let present = 0; const empties = [];
+      for (const [r, c] of unit.cells) { if (g[r][c]) present |= (1 << g[r][c]); else empties.push([r, c]); }
+      for (let v = 1; v <= n; v++) {
+        if (present & (1 << v)) continue;
+        let cnt = 0, sr = -1, sc = -1;
+        for (const [r, c] of empties) { if (candMask(r, c) & (1 << v)) { if (++cnt > 1) break; sr = r; sc = c; } }
+        if (cnt === 0 && empties.length > 0) return { status: "unsolvable", events: ev, grid: g };
+        if (cnt === 1) {
+          place(sr, sc, v);
+          ev.push({ r: sr, c: sc, v, type: "place", tech: "hidden",
+            reason: `In ${unit.type} ${unit.n}, ${valToChar(v)} fits only in R${sr + 1}C${sc + 1} — it is blocked from every other empty cell there.` });
+          progress = true;
+        }
+      }
+    }
+  }
+  if (isComplete(g)) return { status: "solved", events: ev, grid: g };
+
+  // Phase B: backtracking with constraint propagation + MRV
+  const guard = { count: 0, limit: 2_000_000 };
+
+  function undoFast(placed) {
+    for (let i = placed.length - 1; i >= 0; i--) {
+      const [r, c, v] = placed[i]; unplace(r, c, v);
+      ev.push({ r, c, v: 0, type: "remove", tech: "backtrack",
+        reason: `Undo forced value at R${r + 1}C${c + 1} while backtracking.` });
+    }
+  }
+
+  function bt() {
+    if (++guard.count > guard.limit) return false;
+    const placed = [];
+    let prog = true;
+    while (prog) {
+      prog = false;
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+        if (g[r][c]) continue;
+        const m = candMask(r, c);
+        if (m === 0) { undoFast(placed); return false; }
+        if ((m & (m - 1)) === 0) {
+          const v = lowVal(m); place(r, c, v); placed.push([r, c, v]);
+          ev.push({ r, c, v, type: "place", tech: "naked",
+            reason: `R${r + 1}C${c + 1} is forced to ${valToChar(v)} — it's the only remaining candidate after the latest move.` });
+          prog = true;
+        }
+      }
+    }
+    // MRV: empty cell with the fewest candidates
+    let bestR = -1, bestC = -1, bestM = 0, bestCnt = 99;
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      if (g[r][c]) continue;
+      const m = candMask(r, c);
+      if (m === 0) { undoFast(placed); return false; }
+      const cnt = popcount(m);
+      if (cnt < bestCnt) { bestCnt = cnt; bestR = r; bestC = c; bestM = m; if (cnt === 2) break; }
+    }
+    if (bestR === -1) return true; // solved (propagated placements stay)
+    let m = bestM;
+    while (m) {
+      const bit = m & -m; m ^= bit; const v = 31 - Math.clz32(bit);
+      place(bestR, bestC, v);
+      ev.push({ r: bestR, c: bestC, v, type: "place", tech: "guess",
+        reason: `No forced move remained, so the solver tries ${valToChar(v)} in R${bestR + 1}C${bestC + 1} (the cell with the fewest options).` });
+      if (bt()) return true;
+      unplace(bestR, bestC, v);
+      ev.push({ r: bestR, c: bestC, v: 0, type: "remove", tech: "backtrack",
+        reason: `${valToChar(v)} in R${bestR + 1}C${bestC + 1} led to a contradiction — undo it and try the next option.` });
+      if (guard.count > guard.limit) { undoFast(placed); return false; }
+    }
+    undoFast(placed);
+    return false;
+  }
+
+  const ok = bt();
+  if (guard.count >= guard.limit) return { status: "timeout", events: ev, grid: g };
+  return { status: ok ? "solved" : "unsolvable", events: ev, grid: g };
+}
+
+function solveLegacy(puzzle) {
   const g = puzzle.map(row => row.slice());
   const ev = [];
 
@@ -745,6 +874,11 @@ function randomPuzzle(difficulty) {
   const sol = generateSolution();
   const fracByDiff = { easy: 0.52, medium: 0.42, hard: 0.30 };
   let frac = fracByDiff[difficulty] || 0.42;
+  // Larger grids must keep more clues: sparse big puzzles are exponentially
+  // hard for any backtracking solver. Scale density up with size.
+  if (N >= 16) frac += 0.12;
+  if (N >= 25) frac += 0.10;
+  frac = Math.min(frac, 0.72);
   const total = N * N;
   let clues = Math.max(Math.round(total * frac), Math.ceil(total * 0.20));
   const cells = shuffle(
